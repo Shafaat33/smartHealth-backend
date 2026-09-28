@@ -2,9 +2,9 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from models.enums import UserRole
+from app.models.enums import UserRole
 
 
 # ---------- Base / shared fields ----------
@@ -18,7 +18,13 @@ class UserBase(BaseModel):
 # ---------- Create (input, e.g. POST /users) ----------
 
 class UserCreate(UserBase):
-    password: str
+    password: str = Field(min_length=8, max_length=72)
+
+
+class UserRegister(BaseModel):
+    name: str
+    email: str
+    password: str = Field(min_length=8, max_length=72)
 
 
 # ---------- Login (input, e.g. POST /auth/login) ----------
@@ -26,6 +32,11 @@ class UserCreate(UserBase):
 class UserLogin(BaseModel):
     email: str
     password: str
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
 
 
 # ---------- Update (input, e.g. PATCH /users/{id}) ----------
