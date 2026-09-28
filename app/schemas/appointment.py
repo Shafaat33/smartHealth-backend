@@ -4,7 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from models.enums import AppointmentStatus
+from app.models.enums import AppointmentStatus
 
 
 # ---------- Base / shared fields ----------
