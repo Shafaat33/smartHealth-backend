@@ -18,6 +18,11 @@ class PatientNotFound(Exception):
         super().__init__(message)
 
 
+class ProviderNotFound(Exception):
+    def __init__(self, message: str = "Provider not found"):
+        super().__init__(message)
+
+
 class Forbidden(Exception):
     def __init__(self, message: str = "Forbidden"):
         super().__init__(message)
