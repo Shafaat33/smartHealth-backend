@@ -1,6 +1,5 @@
 import uuid
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -16,18 +15,18 @@ class AppointmentBase(BaseModel):
 
 
 # ---------- Create (input, e.g. POST /appointments) ----------
+# patient_id is not accepted from the client. The service uses the
+# logged-in user's patient profile so a patient cannot book as someone else.
 
-class AppointmentCreate(AppointmentBase):
-    pass
+class AppointmentCreate(BaseModel):
+    appointment_time: datetime
+    provider_id: uuid.UUID
 
 
 # ---------- Update (input, e.g. PATCH /appointments/{id}) ----------
 
 class AppointmentUpdate(BaseModel):
-    appointment_time: Optional[datetime] = None
-    status: Optional[AppointmentStatus] = None
-    patient_id: Optional[uuid.UUID] = None
-    provider_id: Optional[uuid.UUID] = None
+    status: AppointmentStatus
 
 
 # ---------- Read (output, e.g. GET /appointments/{id}) ----------
