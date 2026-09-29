@@ -1,5 +1,6 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from uuid import UUID
 
 from app.models.user import User
 
@@ -14,3 +15,6 @@ class UserRepository:
     def add(self, user: User) -> User:
         self.db.add(user)
         return user
+
+    def get_by_id(self, user_id: UUID) -> User | None:
+        return self.db.get(User, user_id)
