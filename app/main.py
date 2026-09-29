@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from app.api.auth import router as auth_router
+from app.api.patients import router as patients_router
 
 app = FastAPI(
     title="Healthcare Management System",
@@ -8,6 +9,7 @@ app = FastAPI(
 )
 
 app.include_router(auth_router)
+app.include_router(patients_router)
 
 
 @app.get("/health")

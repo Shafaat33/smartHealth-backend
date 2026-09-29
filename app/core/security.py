@@ -26,3 +26,7 @@ def create_access_token(user_id: UUID, role: str) -> str:
         "exp": expire,
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+def decode_access_token(token: str) -> dict:
+    return jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])
+    
