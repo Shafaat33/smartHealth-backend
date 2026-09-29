@@ -26,3 +26,8 @@ class ProviderNotFound(Exception):
 class Forbidden(Exception):
     def __init__(self, message: str = "Forbidden"):
         super().__init__(message)
+
+
+class AppointmentNotFound(Exception):
+    def __init__(self, message: str = "Appointment not found"):
+        super().__init__(message)
