@@ -5,7 +5,13 @@ from sqlalchemy.orm import Session
 
 from app.constants import APPOINTMENT_URL
 from app.core.deps import get_current_user, require_role
-from app.core.exceptions import AppointmentNotFound, Forbidden, PatientNotFound, ProviderNotFound
+from app.core.exceptions import (
+    AppointmentNotFound,
+    Forbidden,
+    InvalidAppointmentTransition,
+    PatientNotFound,
+    ProviderNotFound,
+)
 from app.db.session import get_db
 from app.models.enums import UserRole
 from app.models.user import User
@@ -80,5 +86,10 @@ def update_appointment(
     except Forbidden as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except InvalidAppointmentTransition as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
