@@ -2,7 +2,13 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import AppointmentNotFound, Forbidden, PatientNotFound, ProviderNotFound
+from app.core.exceptions import (
+    AppointmentNotFound,
+    Forbidden,
+    InvalidAppointmentTransition,
+    PatientNotFound,
+    ProviderNotFound,
+)
 from app.models.appointment import Appointment
 from app.models.enums import AppointmentStatus, UserRole
 from app.models.user import User
@@ -10,6 +16,12 @@ from app.repositories.appointment import AppointmentRepository
 from app.repositories.patient import PatientRepository
 from app.repositories.provider import ProviderRepository
 from app.schemas.appointment import AppointmentCreate, AppointmentUpdate
+
+ALLOWED_STATUS_TRANSITIONS = {
+    AppointmentStatus.pending: {AppointmentStatus.complete, AppointmentStatus.canceled},
+    AppointmentStatus.complete: set(),
+    AppointmentStatus.canceled: set(),
+}
 
 
 class AppointmentService:
@@ -94,7 +106,15 @@ class AppointmentService:
         if not allowed:
             raise Forbidden()
 
-        appointment.status = payload.status
+        current_status = AppointmentStatus(appointment.status)
+        new_status = AppointmentStatus(payload.status)
+        if current_status == new_status:
+            return appointment
+
+        if new_status not in ALLOWED_STATUS_TRANSITIONS[current_status]:
+            raise InvalidAppointmentTransition(current_status.value, new_status.value)
+
+        appointment.status = new_status
         self.db.commit()
         self.db.refresh(appointment)
         return appointment

@@ -31,3 +31,8 @@ class Forbidden(Exception):
 class AppointmentNotFound(Exception):
     def __init__(self, message: str = "Appointment not found"):
         super().__init__(message)
+
+
+class InvalidAppointmentTransition(Exception):
+    def __init__(self, current: str, new: str):
+        super().__init__(f"Cannot change appointment status from {current} to {new}")
