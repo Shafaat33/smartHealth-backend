@@ -7,10 +7,12 @@ from app.constants import APPOINTMENT_URL
 from app.core.deps import get_current_user, require_role
 from app.core.exceptions import (
     AppointmentNotFound,
+    AppointmentTimeInPast,
     Forbidden,
     InvalidAppointmentTransition,
     PatientNotFound,
     ProviderNotFound,
+    SlotTaken,
 )
 from app.db.session import get_db
 from app.models.enums import UserRole
@@ -37,6 +39,16 @@ def create_appointment(
     except ProviderNotFound as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except AppointmentTimeInPast as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except SlotTaken as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
 

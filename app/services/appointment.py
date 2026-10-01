@@ -1,13 +1,17 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import (
     AppointmentNotFound,
+    AppointmentTimeInPast,
     Forbidden,
     InvalidAppointmentTransition,
     PatientNotFound,
     ProviderNotFound,
+    SlotTaken,
 )
 from app.models.appointment import Appointment
 from app.models.enums import AppointmentStatus, UserRole
@@ -40,14 +44,31 @@ class AppointmentService:
         if provider is None:
             raise ProviderNotFound()
 
+        appointment_time = payload.appointment_time
+        if appointment_time.tzinfo is None:
+            appointment_time = appointment_time.replace(tzinfo=timezone.utc)
+        if appointment_time <= datetime.now(timezone.utc):
+            raise AppointmentTimeInPast()
+
+        existing = self.appointments.get_active_by_provider_and_time(
+            provider.id,
+            appointment_time,
+        )
+        if existing is not None:
+            raise SlotTaken()
+
         appointment = Appointment(
-            appointment_time=payload.appointment_time,
+            appointment_time=appointment_time,
             provider_id=provider.id,
             patient_id=patient.id,
             status=AppointmentStatus.pending,
         )
         self.appointments.add(appointment)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            raise SlotTaken() from None
         self.db.refresh(appointment)
         return appointment
 

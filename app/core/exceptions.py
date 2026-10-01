@@ -36,3 +36,13 @@ class AppointmentNotFound(Exception):
 class InvalidAppointmentTransition(Exception):
     def __init__(self, current: str, new: str):
         super().__init__(f"Cannot change appointment status from {current} to {new}")
+
+
+class SlotTaken(Exception):
+    def __init__(self, message: str = "This provider already has an appointment at that time"):
+        super().__init__(message)
+
+
+class AppointmentTimeInPast(Exception):
+    def __init__(self, message: str = "Appointment time must be in the future"):
+        super().__init__(message)
