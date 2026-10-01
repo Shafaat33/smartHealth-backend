@@ -8,6 +8,7 @@ from app.core.deps import get_current_user, require_role
 from app.core.exceptions import (
     AppointmentNotFound,
     AppointmentTimeInPast,
+    BookingHoldExpired,
     Forbidden,
     InvalidAppointmentTransition,
     PatientNotFound,
@@ -15,7 +16,7 @@ from app.core.exceptions import (
     SchedulingUnavailable,
     SlotTaken,
 )
-from app.core.temporal import start_booking_hold
+from app.core.temporal import signal_booking, start_booking_hold
 from app.db.session import get_db
 from app.models.enums import UserRole
 from app.models.user import User
@@ -96,14 +97,19 @@ def get_appointment(
 
 
 @router.patch("/{appointment_id}", response_model=AppointmentRead)
-def update_appointment(
+async def update_appointment(
     appointment_id: UUID,
     payload: AppointmentUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    service = AppointmentService(db)
     try:
-        return AppointmentService(db).update_status(current_user, appointment_id, payload)
+        appointment, skip_signal = service.prepare_action(
+            current_user,
+            appointment_id,
+            payload.action,
+        )
     except AppointmentNotFound as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -119,3 +125,22 @@ def update_appointment(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+
+    if skip_signal:
+        return appointment
+
+    try:
+        await signal_booking(appointment_id, payload.action.value)
+    except BookingHoldExpired as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(SchedulingUnavailable()),
+        ) from exc
+
+    db.refresh(appointment)
+    return appointment

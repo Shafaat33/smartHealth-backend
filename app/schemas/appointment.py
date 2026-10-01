@@ -1,9 +1,16 @@
+import enum
 import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
 from app.models.enums import AppointmentStatus
+
+
+class AppointmentAction(str, enum.Enum):
+    confirm = "confirm"
+    complete = "complete"
+    canceled = "canceled"
 
 
 # ---------- Base / shared fields ----------
@@ -26,7 +33,7 @@ class AppointmentCreate(BaseModel):
 # ---------- Update (input, e.g. PATCH /appointments/{id}) ----------
 
 class AppointmentUpdate(BaseModel):
-    status: AppointmentStatus
+    action: AppointmentAction
 
 
 # ---------- Read (output, e.g. GET /appointments/{id}) ----------
