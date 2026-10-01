@@ -51,3 +51,8 @@ class AppointmentTimeInPast(Exception):
 class SchedulingUnavailable(Exception):
     def __init__(self, message: str = "Scheduling unavailable"):
         super().__init__(message)
+
+
+class BookingHoldExpired(Exception):
+    def __init__(self, message: str = "Booking hold expired"):
+        super().__init__(message)

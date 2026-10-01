@@ -19,7 +19,7 @@ from app.models.user import User
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.patient import PatientRepository
 from app.repositories.provider import ProviderRepository
-from app.schemas.appointment import AppointmentCreate, AppointmentUpdate
+from app.schemas.appointment import AppointmentAction, AppointmentCreate
 
 ALLOWED_STATUS_TRANSITIONS = {
     AppointmentStatus.pending: {AppointmentStatus.complete, AppointmentStatus.canceled},
@@ -115,12 +115,7 @@ class AppointmentService:
             raise Forbidden()
         return appointment
 
-    def update_status(
-        self,
-        current_user: User,
-        appointment_id: UUID,
-        payload: AppointmentUpdate,
-    ) -> Appointment:
+    def authorize_update(self, current_user: User, appointment_id: UUID) -> Appointment:
         appointment = self.appointments.get_by_id(appointment_id)
         if appointment is None:
             raise AppointmentNotFound()
@@ -135,12 +130,43 @@ class AppointmentService:
 
         if not allowed:
             raise Forbidden()
+        return appointment
+
+    def validate_action(self, appointment: Appointment, action: AppointmentAction) -> None:
+        current_status = AppointmentStatus(appointment.status)
+        if action == AppointmentAction.confirm:
+            if current_status != AppointmentStatus.pending:
+                raise InvalidAppointmentTransition(current_status.value, action.value)
+            return
+
+        new_status = AppointmentStatus(action.value)
+        if current_status == new_status:
+            return
+        if new_status not in ALLOWED_STATUS_TRANSITIONS[current_status]:
+            raise InvalidAppointmentTransition(current_status.value, new_status.value)
+
+    def prepare_action(
+        self,
+        current_user: User,
+        appointment_id: UUID,
+        action: AppointmentAction,
+    ) -> tuple[Appointment, bool]:
+        appointment = self.authorize_update(current_user, appointment_id)
+        self.validate_action(appointment, action)
+        if action != AppointmentAction.confirm:
+            current_status = AppointmentStatus(appointment.status)
+            if current_status == AppointmentStatus(action.value):
+                return appointment, True
+        return appointment, False
+
+    def apply_status(self, appointment_id: UUID, new_status: AppointmentStatus) -> Appointment | None:
+        appointment = self.appointments.get_by_id(appointment_id)
+        if appointment is None:
+            return None
 
         current_status = AppointmentStatus(appointment.status)
-        new_status = AppointmentStatus(payload.status)
         if current_status == new_status:
             return appointment
-
         if new_status not in ALLOWED_STATUS_TRANSITIONS[current_status]:
             raise InvalidAppointmentTransition(current_status.value, new_status.value)
 

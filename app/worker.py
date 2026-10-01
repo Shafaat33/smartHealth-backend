@@ -4,7 +4,7 @@ import logging
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from app.activities.booking import release_slot_if_pending
+from app.activities.booking import apply_appointment_status, release_slot_if_pending
 from app.activities.ping import ping
 from app.core.config import TEMPORAL_ADDRESS, TEMPORAL_TASK_QUEUE
 from app.workflows.booking import BookingWorkflow
@@ -31,7 +31,7 @@ async def main() -> None:
         client,
         task_queue=TEMPORAL_TASK_QUEUE,
         workflows=[PingWorkflow, BookingWorkflow],
-        activities=[ping, release_slot_if_pending],
+        activities=[ping, release_slot_if_pending, apply_appointment_status],
     )
     logger.info("Worker listening on %s", TEMPORAL_TASK_QUEUE)
     await worker.run()
