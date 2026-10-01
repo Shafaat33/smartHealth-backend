@@ -46,3 +46,8 @@ class SlotTaken(Exception):
 class AppointmentTimeInPast(Exception):
     def __init__(self, message: str = "Appointment time must be in the future"):
         super().__init__(message)
+
+
+class SchedulingUnavailable(Exception):
+    def __init__(self, message: str = "Scheduling unavailable"):
+        super().__init__(message)

@@ -72,6 +72,15 @@ class AppointmentService:
         self.db.refresh(appointment)
         return appointment
 
+    def release_if_pending(self, appointment_id: UUID) -> None:
+        appointment = self.appointments.get_by_id(appointment_id)
+        if appointment is None:
+            return
+        if AppointmentStatus(appointment.status) != AppointmentStatus.pending:
+            return
+        appointment.status = AppointmentStatus.canceled
+        self.db.commit()
+
     def list(self, current_user: User) -> list[Appointment]:
         if current_user.role == UserRole.front_desk:
             return self.appointments.list_all()

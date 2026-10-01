@@ -12,8 +12,10 @@ from app.core.exceptions import (
     InvalidAppointmentTransition,
     PatientNotFound,
     ProviderNotFound,
+    SchedulingUnavailable,
     SlotTaken,
 )
+from app.core.temporal import start_booking_hold
 from app.db.session import get_db
 from app.models.enums import UserRole
 from app.models.user import User
@@ -24,13 +26,14 @@ router = APIRouter(prefix=APPOINTMENT_URL, tags=["appointments"])
 
 
 @router.post("", response_model=AppointmentRead, status_code=status.HTTP_201_CREATED)
-def create_appointment(
+async def create_appointment(
     payload: AppointmentCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.patient)),
 ):
+    service = AppointmentService(db)
     try:
-        return AppointmentService(db).create(current_user, payload)
+        appointment = service.create(current_user, payload)
     except PatientNotFound as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -51,6 +54,17 @@ def create_appointment(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+
+    try:
+        await start_booking_hold(appointment.id)
+    except Exception as exc:
+        service.release_if_pending(appointment.id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(SchedulingUnavailable()),
+        ) from exc
+
+    return appointment
 
 
 @router.get("", response_model=list[AppointmentRead])
