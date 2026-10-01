@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, DateTime, Enum as SqlEnum
+from sqlalchemy import DateTime, Enum as SqlEnum, ForeignKey, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,3 +28,13 @@ class Appointment(TimestampMixin, Base):
 
     patient: Mapped["Patient"] = relationship(back_populates="appointments")
     provider: Mapped["Provider"] = relationship(back_populates="appointments")
+
+    __table_args__ = (
+        Index(
+            "uq_provider_slot",
+            "provider_id",
+            "appointment_time",
+            unique=True,
+            postgresql_where=text("status NOT IN ('complete', 'canceled')"),
+        ),
+    )

@@ -1,9 +1,11 @@
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.appointment import Appointment
+from app.models.enums import AppointmentStatus
 
 
 class AppointmentRepository:
@@ -16,6 +18,21 @@ class AppointmentRepository:
 
     def get_by_id(self, appointment_id: UUID) -> Appointment | None:
         return self.db.get(Appointment, appointment_id)
+
+    def get_active_by_provider_and_time(
+        self,
+        provider_id: UUID,
+        appointment_time: datetime,
+    ) -> Appointment | None:
+        return self.db.scalar(
+            select(Appointment).where(
+                Appointment.provider_id == provider_id,
+                Appointment.appointment_time == appointment_time,
+                Appointment.status.notin_(
+                    [AppointmentStatus.complete, AppointmentStatus.canceled]
+                ),
+            )
+        )
 
     def list_all(self) -> list[Appointment]:
         return list(
