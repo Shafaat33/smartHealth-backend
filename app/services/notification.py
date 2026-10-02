@@ -13,7 +13,7 @@ from app.models.user import User
 from app.repositories.notification import NotificationRepository
 from app.repositories.patient import PatientRepository
 from app.repositories.provider import ProviderRepository
-from app.schemas.event import appointment_event
+from app.schemas.event import AppointmentEvent, appointment_event
 
 logger = logging.getLogger(__name__)
 
@@ -39,42 +39,42 @@ class NotificationService:
         try:
             event = appointment_event(appointment, event_type)
             logger.info("appointment event %s", event.model_dump(mode="json"))
-
-            body = _BODIES[event_type]
-            for user_id in self._recipient_user_ids(appointment):
-                if self.notifications.get_by_user_appointment_event(
-                    user_id,
-                    appointment.id,
-                    event_type,
-                ):
-                    continue
-                self.notifications.add(
-                    Notification(
-                        user_id=user_id,
-                        appointment_id=appointment.id,
-                        event_type=event_type.value,
-                        body=body,
-                    )
-                )
-                try:
-                    self.db.commit()
-                except IntegrityError:
-                    self.db.rollback()
             publish_appointment_event(event)
         except Exception:
-            self.db.rollback()
             logger.exception(
                 "failed to record %s for appointment %s",
                 event_type.value,
                 appointment.id,
             )
 
-    def _recipient_user_ids(self, appointment: Appointment) -> list[UUID]:
+    def deliver(self, event: AppointmentEvent) -> None:
+        body = _BODIES[event.event_type]
+        for user_id in self._recipient_user_ids(event.patient_id, event.provider_id):
+            if self.notifications.get_by_user_appointment_event(
+                user_id,
+                event.appointment_id,
+                event.event_type,
+            ):
+                continue
+            self.notifications.add(
+                Notification(
+                    user_id=user_id,
+                    appointment_id=event.appointment_id,
+                    event_type=event.event_type.value,
+                    body=body,
+                )
+            )
+            try:
+                self.db.commit()
+            except IntegrityError:
+                self.db.rollback()
+
+    def _recipient_user_ids(self, patient_id: UUID, provider_id: UUID) -> list[UUID]:
         recipients = []
-        patient = self.patients.get_by_id(appointment.patient_id)
+        patient = self.patients.get_by_id(patient_id)
         if patient is not None:
             recipients.append(patient.user_id)
-        provider = self.providers.get_by_id(appointment.provider_id)
+        provider = self.providers.get_by_id(provider_id)
         if provider is not None:
             recipients.append(provider.user_id)
         return recipients
