@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import (
     AppointmentNotFound,
+    AppointmentNotReschedulable,
     AppointmentTimeInPast,
     Forbidden,
     InvalidAppointmentTransition,
@@ -23,10 +24,24 @@ from app.schemas.appointment import AppointmentAction, AppointmentCreate
 from app.services.notification import NotificationService
 
 ALLOWED_STATUS_TRANSITIONS = {
-    AppointmentStatus.pending: {AppointmentStatus.complete, AppointmentStatus.canceled},
+    AppointmentStatus.pending: {
+        AppointmentStatus.confirmed,
+        AppointmentStatus.complete,
+        AppointmentStatus.canceled,
+    },
+    AppointmentStatus.confirmed: {
+        AppointmentStatus.complete,
+        AppointmentStatus.canceled,
+    },
     AppointmentStatus.complete: set(),
     AppointmentStatus.canceled: set(),
 }
+
+
+def target_status(action: AppointmentAction) -> AppointmentStatus:
+    if action == AppointmentAction.confirm:
+        return AppointmentStatus.confirmed
+    return AppointmentStatus(action.value)
 
 
 class AppointmentService:
@@ -71,8 +86,7 @@ class AppointmentService:
         except IntegrityError:
             self.db.rollback()
             raise SlotTaken() from None
-        self.db.refresh(appointment)
-        return appointment
+        return self.appointments.get_by_id(appointment.id) or appointment
 
     def release_if_pending(self, appointment_id: UUID, *, notify: bool = True) -> None:
         appointment = self.appointments.get_by_id(appointment_id)
@@ -138,12 +152,7 @@ class AppointmentService:
 
     def validate_action(self, appointment: Appointment, action: AppointmentAction) -> None:
         current_status = AppointmentStatus(appointment.status)
-        if action == AppointmentAction.confirm:
-            if current_status != AppointmentStatus.pending:
-                raise InvalidAppointmentTransition(current_status.value, action.value)
-            return
-
-        new_status = AppointmentStatus(action.value)
+        new_status = target_status(action)
         if current_status == new_status:
             return
         if new_status not in ALLOWED_STATUS_TRANSITIONS[current_status]:
@@ -157,10 +166,9 @@ class AppointmentService:
     ) -> tuple[Appointment, bool]:
         appointment = self.authorize_update(current_user, appointment_id)
         self.validate_action(appointment, action)
-        if action != AppointmentAction.confirm:
-            current_status = AppointmentStatus(appointment.status)
-            if current_status == AppointmentStatus(action.value):
-                return appointment, True
+        current_status = AppointmentStatus(appointment.status)
+        if current_status == target_status(action):
+            return appointment, True
         return appointment, False
 
     def apply_status(self, appointment_id: UUID, new_status: AppointmentStatus) -> Appointment | None:
@@ -176,9 +184,67 @@ class AppointmentService:
 
         appointment.status = new_status
         self.db.commit()
-        self.db.refresh(appointment)
-        if new_status == AppointmentStatus.complete:
+        appointment = self.appointments.get_by_id(appointment_id) or appointment
+        if new_status == AppointmentStatus.confirmed:
+            self.notifications.record(appointment, AppointmentEventType.confirmed)
+        elif new_status == AppointmentStatus.complete:
             self.notifications.record(appointment, AppointmentEventType.completed)
         elif new_status == AppointmentStatus.canceled:
             self.notifications.record(appointment, AppointmentEventType.canceled)
+        return appointment
+
+    def apply_action(self, appointment_id: UUID, action: AppointmentAction) -> Appointment | None:
+        return self.apply_status(appointment_id, target_status(action))
+
+    def reschedule(
+        self,
+        current_user: User,
+        appointment_id: UUID,
+        appointment_time: datetime,
+    ) -> Appointment:
+        appointment = self.appointments.get_by_id(appointment_id)
+        if appointment is None:
+            raise AppointmentNotFound()
+
+        if current_user.role == UserRole.front_desk:
+            allowed = True
+        elif current_user.role == UserRole.patient:
+            patient = self.patients.get_by_user_id(current_user.id)
+            allowed = patient is not None and patient.id == appointment.patient_id
+        elif current_user.role == UserRole.provider:
+            provider = self.providers.get_by_user_id(current_user.id)
+            allowed = provider is not None and provider.id == appointment.provider_id
+        else:
+            allowed = False
+
+        if not allowed:
+            raise Forbidden()
+
+        current_status = AppointmentStatus(appointment.status)
+        if current_status not in (AppointmentStatus.pending, AppointmentStatus.confirmed):
+            raise AppointmentNotReschedulable()
+
+        if appointment_time.tzinfo is None:
+            appointment_time = appointment_time.replace(tzinfo=timezone.utc)
+        if appointment_time <= datetime.now(timezone.utc):
+            raise AppointmentTimeInPast()
+        if appointment.appointment_time == appointment_time:
+            return appointment
+
+        existing = self.appointments.get_active_by_provider_and_time(
+            appointment.provider_id,
+            appointment_time,
+        )
+        if existing is not None and existing.id != appointment.id:
+            raise SlotTaken()
+
+        appointment.appointment_time = appointment_time
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            raise SlotTaken() from None
+
+        appointment = self.appointments.get_by_id(appointment_id) or appointment
+        self.notifications.record(appointment, AppointmentEventType.rescheduled)
         return appointment

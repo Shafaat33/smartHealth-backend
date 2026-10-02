@@ -7,6 +7,7 @@ from app.constants import APPOINTMENT_URL
 from app.core.deps import get_current_user, require_role
 from app.core.exceptions import (
     AppointmentNotFound,
+    AppointmentNotReschedulable,
     AppointmentTimeInPast,
     BookingHoldExpired,
     Forbidden,
@@ -21,7 +22,12 @@ from app.core.temporal import signal_booking, start_booking_hold
 from app.db.session import get_db
 from app.models.enums import AppointmentEventType, UserRole
 from app.models.user import User
-from app.schemas.appointment import AppointmentAction, AppointmentCreate, AppointmentRead, AppointmentUpdate
+from app.schemas.appointment import (
+    AppointmentCreate,
+    AppointmentRead,
+    AppointmentReschedule,
+    AppointmentUpdate,
+)
 from app.services.appointment import AppointmentService
 
 router = APIRouter(prefix=APPOINTMENT_URL, tags=["appointments"])
@@ -145,7 +151,45 @@ async def update_appointment(
             detail=str(SchedulingUnavailable()),
         ) from exc
 
-    db.refresh(appointment)
-    if payload.action == AppointmentAction.confirm:
-        service.notifications.record(appointment, AppointmentEventType.confirmed)
-    return appointment
+    updated = service.apply_action(appointment.id, payload.action)
+    return updated or appointment
+
+
+@router.post("/{appointment_id}/reschedule", response_model=AppointmentRead)
+def reschedule_appointment(
+    appointment_id: UUID,
+    payload: AppointmentReschedule,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        return AppointmentService(db).reschedule(
+            current_user,
+            appointment_id,
+            payload.appointment_time,
+        )
+    except AppointmentNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except Forbidden as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except AppointmentNotReschedulable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except AppointmentTimeInPast as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except SlotTaken as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc

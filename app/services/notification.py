@@ -14,12 +14,14 @@ from app.repositories.notification import NotificationRepository
 from app.repositories.patient import PatientRepository
 from app.repositories.provider import ProviderRepository
 from app.schemas.event import AppointmentEvent, appointment_event
+from app.services.analytics import AnalyticsService
 
 logger = logging.getLogger(__name__)
 
 _BODIES = {
     AppointmentEventType.booked: "Your appointment was booked.",
     AppointmentEventType.confirmed: "Your appointment was confirmed.",
+    AppointmentEventType.rescheduled: "Your appointment was rescheduled.",
     AppointmentEventType.canceled: "Your appointment was canceled.",
     AppointmentEventType.completed: "Your appointment was completed.",
 }
@@ -36,13 +38,22 @@ class NotificationService:
         return self.notifications.list_by_user_id(current_user.id)
 
     def record(self, appointment: Appointment, event_type: AppointmentEventType) -> None:
+        event = appointment_event(appointment, event_type)
+        logger.info("appointment event %s", event.model_dump(mode="json"))
         try:
-            event = appointment_event(appointment, event_type)
-            logger.info("appointment event %s", event.model_dump(mode="json"))
             publish_appointment_event(event)
         except Exception:
             logger.exception(
-                "failed to record %s for appointment %s",
+                "failed to publish %s for appointment %s",
+                event_type.value,
+                appointment.id,
+            )
+        try:
+            self.deliver(event)
+            AnalyticsService(self.db).record(event)
+        except Exception:
+            logger.exception(
+                "failed to persist %s for appointment %s",
                 event_type.value,
                 appointment.id,
             )

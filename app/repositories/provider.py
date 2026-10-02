@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.provider import Provider
 
@@ -15,10 +15,24 @@ class ProviderRepository:
         return provider
 
     def get_by_id(self, provider_id: UUID) -> Provider | None:
-        return self.db.get(Provider, provider_id)
+        return self.db.scalar(
+            select(Provider)
+            .options(joinedload(Provider.user))
+            .where(Provider.id == provider_id)
+        )
 
     def get_by_user_id(self, user_id: UUID) -> Provider | None:
-        return self.db.scalar(select(Provider).where(Provider.user_id == user_id))
+        return self.db.scalar(
+            select(Provider)
+            .options(joinedload(Provider.user))
+            .where(Provider.user_id == user_id)
+        )
 
     def list(self) -> list[Provider]:
-        return list(self.db.scalars(select(Provider).order_by(Provider.created_at)).all())
+        return list(
+            self.db.scalars(
+                select(Provider)
+                .options(joinedload(Provider.user))
+                .order_by(Provider.created_at)
+            ).all()
+        )

@@ -20,3 +20,7 @@ class Patient(TimestampMixin, Base):
 
     user: Mapped["User"] = relationship(back_populates="patient")
     appointments: Mapped[list["Appointment"]] = relationship(back_populates="patient")
+
+    @property
+    def name(self) -> str:
+        return self.user.name if self.user is not None else ""

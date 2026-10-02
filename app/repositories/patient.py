@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.patient import Patient
 
@@ -15,13 +15,27 @@ class PatientRepository:
         return patient
 
     def get_by_id(self, patient_id: UUID) -> Patient | None:
-        return self.db.get(Patient, patient_id)
+        return self.db.scalar(
+            select(Patient)
+            .options(joinedload(Patient.user))
+            .where(Patient.id == patient_id)
+        )
 
     def get_by_user_id(self, user_id: UUID) -> Patient | None:
-        return self.db.scalar(select(Patient).where(Patient.user_id == user_id))
+        return self.db.scalar(
+            select(Patient)
+            .options(joinedload(Patient.user))
+            .where(Patient.user_id == user_id)
+        )
 
     def list(self) -> list[Patient]:
-        return list(self.db.scalars(select(Patient).order_by(Patient.created_at)).all())
+        return list(
+            self.db.scalars(
+                select(Patient)
+                .options(joinedload(Patient.user))
+                .order_by(Patient.created_at)
+            ).all()
+        )
 
     def count(self) -> int:
         return int(self.db.scalar(select(func.count()).select_from(Patient)) or 0)
