@@ -8,10 +8,13 @@ from .appointment import (
     AppointmentUpdate,
     AppointmentRead,
 )
+from .event import AppointmentEvent
+from .notification import NotificationRead
 
 __all__ = [
     "UserBase", "UserCreate", "UserRegister", "UserLogin", "Token", "UserUpdate", "UserRead",
     "PatientBase", "PatientCreate", "PatientUpdate", "PatientRead",
     "ProviderCreate", "ProviderUpdate", "ProviderRead",
     "AppointmentAction", "AppointmentBase", "AppointmentCreate", "AppointmentUpdate", "AppointmentRead",
+    "AppointmentEvent", "NotificationRead",
 ]

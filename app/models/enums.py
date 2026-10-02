@@ -11,4 +11,11 @@ class AppointmentStatus(str, enum.Enum):
     pending = "pending"
     complete = "complete"
     canceled = "canceled"
+
+
+class AppointmentEventType(str, enum.Enum):
+    booked = "appointment.booked"
+    confirmed = "appointment.confirmed"
+    canceled = "appointment.canceled"
+    completed = "appointment.completed"
     
