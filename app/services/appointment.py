@@ -14,12 +14,13 @@ from app.core.exceptions import (
     SlotTaken,
 )
 from app.models.appointment import Appointment
-from app.models.enums import AppointmentStatus, UserRole
+from app.models.enums import AppointmentEventType, AppointmentStatus, UserRole
 from app.models.user import User
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.patient import PatientRepository
 from app.repositories.provider import ProviderRepository
 from app.schemas.appointment import AppointmentAction, AppointmentCreate
+from app.services.notification import NotificationService
 
 ALLOWED_STATUS_TRANSITIONS = {
     AppointmentStatus.pending: {AppointmentStatus.complete, AppointmentStatus.canceled},
@@ -34,6 +35,7 @@ class AppointmentService:
         self.appointments = AppointmentRepository(db)
         self.patients = PatientRepository(db)
         self.providers = ProviderRepository(db)
+        self.notifications = NotificationService(db)
 
     def create(self, current_user: User, payload: AppointmentCreate) -> Appointment:
         patient = self.patients.get_by_user_id(current_user.id)
@@ -72,7 +74,7 @@ class AppointmentService:
         self.db.refresh(appointment)
         return appointment
 
-    def release_if_pending(self, appointment_id: UUID) -> None:
+    def release_if_pending(self, appointment_id: UUID, *, notify: bool = True) -> None:
         appointment = self.appointments.get_by_id(appointment_id)
         if appointment is None:
             return
@@ -80,6 +82,8 @@ class AppointmentService:
             return
         appointment.status = AppointmentStatus.canceled
         self.db.commit()
+        if notify:
+            self.notifications.record(appointment, AppointmentEventType.canceled)
 
     def list(self, current_user: User) -> list[Appointment]:
         if current_user.role == UserRole.front_desk:
@@ -173,4 +177,8 @@ class AppointmentService:
         appointment.status = new_status
         self.db.commit()
         self.db.refresh(appointment)
+        if new_status == AppointmentStatus.complete:
+            self.notifications.record(appointment, AppointmentEventType.completed)
+        elif new_status == AppointmentStatus.canceled:
+            self.notifications.record(appointment, AppointmentEventType.canceled)
         return appointment

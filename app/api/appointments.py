@@ -18,9 +18,9 @@ from app.core.exceptions import (
 )
 from app.core.temporal import signal_booking, start_booking_hold
 from app.db.session import get_db
-from app.models.enums import UserRole
+from app.models.enums import AppointmentEventType, UserRole
 from app.models.user import User
-from app.schemas.appointment import AppointmentCreate, AppointmentRead, AppointmentUpdate
+from app.schemas.appointment import AppointmentAction, AppointmentCreate, AppointmentRead, AppointmentUpdate
 from app.services.appointment import AppointmentService
 
 router = APIRouter(prefix=APPOINTMENT_URL, tags=["appointments"])
@@ -59,12 +59,13 @@ async def create_appointment(
     try:
         await start_booking_hold(appointment.id)
     except Exception as exc:
-        service.release_if_pending(appointment.id)
+        service.release_if_pending(appointment.id, notify=False)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(SchedulingUnavailable()),
         ) from exc
 
+    service.notifications.record(appointment, AppointmentEventType.booked)
     return appointment
 
 
@@ -143,4 +144,6 @@ async def update_appointment(
         ) from exc
 
     db.refresh(appointment)
+    if payload.action == AppointmentAction.confirm:
+        service.notifications.record(appointment, AppointmentEventType.confirmed)
     return appointment
