@@ -10,6 +10,7 @@ from app.core.config import (
     REDIS_URL,
 )
 from app.schemas.event import AppointmentEvent
+from app.tasks.analytics import record_analytics
 from app.tasks.notifications import send_notification
 
 logging.basicConfig(level=logging.INFO)
@@ -46,10 +47,12 @@ def _enqueue(event: AppointmentEvent) -> None:
             time.sleep(2)
             continue
         try:
-            send_notification.delay(event.model_dump(mode="json"))
+            payload = event.model_dump(mode="json")
+            send_notification.delay(payload)
+            record_analytics.delay(payload)
             return
         except Exception:
-            logger.exception("failed to enqueue send_notification, retrying...")
+            logger.exception("failed to enqueue appointment event tasks, retrying...")
             time.sleep(2)
 
 
