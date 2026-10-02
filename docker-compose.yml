@@ -50,10 +50,14 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_TASK_QUEUE: ${TEMPORAL_TASK_QUEUE:-smarthealth-task-queue}
       BOOKING_HOLD_SECONDS: ${BOOKING_HOLD_SECONDS:-60}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_APPOINTMENTS_TOPIC: ${KAFKA_APPOINTMENTS_TOPIC:-appointments}
     depends_on:
       db:
         condition: service_healthy
       temporal:
+        condition: service_started
+      kafka:
         condition: service_started
 
   worker:
@@ -65,9 +69,53 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_TASK_QUEUE: ${TEMPORAL_TASK_QUEUE:-smarthealth-task-queue}
       BOOKING_HOLD_SECONDS: ${BOOKING_HOLD_SECONDS:-60}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_APPOINTMENTS_TOPIC: ${KAFKA_APPOINTMENTS_TOPIC:-appointments}
     restart: unless-stopped
     depends_on:
       - temporal
+      - kafka
+
+  kafka:
+    image: apache/kafka:3.9.1
+    hostname: kafka
+    ports:
+      - "9094:9094"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  kafka-consumer:
+    build: .
+    entrypoint: ["python", "-m", "app.consumers.appointments"]
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      SECRET_KEY: ${SECRET_KEY}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_APPOINTMENTS_TOPIC: ${KAFKA_APPOINTMENTS_TOPIC:-appointments}
+      KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-smarthealth-appointments-logger}
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
 
 volumes:
   postgres_data:
