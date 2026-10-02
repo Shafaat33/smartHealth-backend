@@ -16,6 +16,7 @@ from app.core.exceptions import (
     SchedulingUnavailable,
     SlotTaken,
 )
+from app.core.metrics import appointments_booked_total
 from app.core.temporal import signal_booking, start_booking_hold
 from app.db.session import get_db
 from app.models.enums import AppointmentEventType, UserRole
@@ -66,6 +67,7 @@ async def create_appointment(
         ) from exc
 
     service.notifications.record(appointment, AppointmentEventType.booked)
+    appointments_booked_total.inc()
     return appointment
 
 
