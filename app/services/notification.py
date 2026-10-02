@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.kafka import publish_appointment_event
 from app.models.appointment import Appointment
 from app.models.enums import AppointmentEventType
 from app.models.notification import Notification
@@ -59,6 +60,7 @@ class NotificationService:
                     self.db.commit()
                 except IntegrityError:
                     self.db.rollback()
+            publish_appointment_event(event)
         except Exception:
             self.db.rollback()
             logger.exception(
