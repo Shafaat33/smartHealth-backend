@@ -29,6 +29,18 @@ class Appointment(TimestampMixin, Base):
     patient: Mapped["Patient"] = relationship(back_populates="appointments")
     provider: Mapped["Provider"] = relationship(back_populates="appointments")
 
+    @property
+    def patient_name(self) -> str:
+        if self.patient is None or self.patient.user is None:
+            return ""
+        return self.patient.user.name
+
+    @property
+    def provider_name(self) -> str:
+        if self.provider is None or self.provider.user is None:
+            return ""
+        return self.provider.user.name
+
     __table_args__ = (
         Index(
             "uq_provider_slot",

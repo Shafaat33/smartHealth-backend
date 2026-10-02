@@ -36,6 +36,10 @@ class AppointmentUpdate(BaseModel):
     action: AppointmentAction
 
 
+class AppointmentReschedule(BaseModel):
+    appointment_time: datetime
+
+
 # ---------- Read (output, e.g. GET /appointments/{id}) ----------
 
 class AppointmentRead(AppointmentBase):
@@ -44,4 +48,6 @@ class AppointmentRead(AppointmentBase):
     id: uuid.UUID
     created_at: datetime
     status: AppointmentStatus
+    patient_name: str
+    provider_name: str
     

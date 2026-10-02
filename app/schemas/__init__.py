@@ -5,6 +5,7 @@ from .appointment import (
     AppointmentAction,
     AppointmentBase,
     AppointmentCreate,
+    AppointmentReschedule,
     AppointmentUpdate,
     AppointmentRead,
 )
@@ -16,7 +17,8 @@ __all__ = [
     "UserBase", "UserCreate", "UserRegister", "UserLogin", "Token", "UserUpdate", "UserRead",
     "PatientBase", "PatientCreate", "PatientUpdate", "PatientRead",
     "ProviderCreate", "ProviderUpdate", "ProviderRead",
-    "AppointmentAction", "AppointmentBase", "AppointmentCreate", "AppointmentUpdate", "AppointmentRead",
+    "AppointmentAction", "AppointmentBase", "AppointmentCreate", "AppointmentReschedule",
+    "AppointmentUpdate", "AppointmentRead",
     "AppointmentEvent", "NotificationRead",
     "AnalyticsRead", "BookedOverTime",
 ]

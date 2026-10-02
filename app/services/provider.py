@@ -42,8 +42,7 @@ class ProviderService:
             self.db.rollback()
             raise EmailAlreadyExists() from None
 
-        self.db.refresh(provider)
-        return provider
+        return self.providers.get_by_id(provider.id) or provider
 
     def get_me(self, current_user: User) -> Provider:
         provider = self.providers.get_by_user_id(current_user.id)

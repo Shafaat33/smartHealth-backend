@@ -19,4 +19,5 @@ class ProviderRead(BaseModel):
 
     id: uuid.UUID
     user_id: uuid.UUID
+    name: str
     created_at: datetime

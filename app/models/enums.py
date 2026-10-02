@@ -9,6 +9,7 @@ class UserRole(str, enum.Enum):
 
 class AppointmentStatus(str, enum.Enum):
     pending = "pending"
+    confirmed = "confirmed"
     complete = "complete"
     canceled = "canceled"
 
@@ -16,6 +17,7 @@ class AppointmentStatus(str, enum.Enum):
 class AppointmentEventType(str, enum.Enum):
     booked = "appointment.booked"
     confirmed = "appointment.confirmed"
+    rescheduled = "appointment.rescheduled"
     canceled = "appointment.canceled"
     completed = "appointment.completed"
     

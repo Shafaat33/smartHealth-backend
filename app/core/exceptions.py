@@ -56,3 +56,8 @@ class SchedulingUnavailable(Exception):
 class BookingHoldExpired(Exception):
     def __init__(self, message: str = "Booking hold expired"):
         super().__init__(message)
+
+
+class AppointmentNotReschedulable(Exception):
+    def __init__(self, message: str = "Only pending or confirmed appointments can be rescheduled"):
+        super().__init__(message)
