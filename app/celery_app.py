@@ -1,6 +1,8 @@
 from celery import Celery
+from celery.signals import worker_ready
+from prometheus_client import start_http_server
 
-from app.core.config import REDIS_URL
+from app.core.config import CELERY_METRICS_PORT, REDIS_URL
 
 celery_app = Celery(
     "smarthealth",
@@ -15,3 +17,8 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
 )
+
+
+@worker_ready.connect
+def _start_metrics(**_kwargs) -> None:
+    start_http_server(CELERY_METRICS_PORT)
