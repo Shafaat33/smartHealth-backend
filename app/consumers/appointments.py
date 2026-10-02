@@ -7,8 +7,10 @@ from app.core.config import (
     KAFKA_APPOINTMENTS_TOPIC,
     KAFKA_BOOTSTRAP_SERVERS,
     KAFKA_CONSUMER_GROUP,
+    REDIS_URL,
 )
 from app.schemas.event import AppointmentEvent
+from app.tasks.notifications import send_notification
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,7 +28,7 @@ def _connect() -> Consumer:
                     "bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS,
                     "group.id": KAFKA_CONSUMER_GROUP,
                     "auto.offset.reset": "earliest",
-                    "enable.auto.commit": True,
+                    "enable.auto.commit": False,
                 }
             )
             consumer.list_topics(timeout=5)
@@ -34,6 +36,20 @@ def _connect() -> Consumer:
             return consumer
         except KafkaException:
             logger.warning("Kafka not ready at %s, retrying...", KAFKA_BOOTSTRAP_SERVERS)
+            time.sleep(2)
+
+
+def _enqueue(event: AppointmentEvent) -> None:
+    while True:
+        if not REDIS_URL:
+            logger.warning("REDIS_URL is not set, retrying enqueue...")
+            time.sleep(2)
+            continue
+        try:
+            send_notification.delay(event.model_dump(mode="json"))
+            return
+        except Exception:
+            logger.exception("failed to enqueue send_notification, retrying...")
             time.sleep(2)
 
 
@@ -57,6 +73,8 @@ def main() -> None:
             try:
                 event = AppointmentEvent.model_validate_json(message.value())
                 logger.info("received appointment event %s", event.model_dump(mode="json"))
+                _enqueue(event)
+                consumer.commit(message)
             except Exception:
                 logger.exception("failed to parse appointment event: %s", message.value())
     finally:

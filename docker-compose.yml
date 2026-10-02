@@ -112,9 +112,37 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_APPOINTMENTS_TOPIC: ${KAFKA_APPOINTMENTS_TOPIC:-appointments}
       KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-smarthealth-appointments-logger}
+      REDIS_URL: redis://redis:6379/0
     restart: unless-stopped
     depends_on:
       kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  celery:
+    build: .
+    entrypoint: ["celery", "-A", "app.celery_app", "worker", "--loglevel=INFO"]
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      SECRET_KEY: ${SECRET_KEY}
+      REDIS_URL: redis://redis:6379/0
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
         condition: service_healthy
 
 volumes:
