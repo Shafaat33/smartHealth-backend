@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.patient import Patient
@@ -22,3 +22,6 @@ class PatientRepository:
 
     def list(self) -> list[Patient]:
         return list(self.db.scalars(select(Patient).order_by(Patient.created_at)).all())
+
+    def count(self) -> int:
+        return int(self.db.scalar(select(func.count()).select_from(Patient)) or 0)

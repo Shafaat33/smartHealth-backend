@@ -10,6 +10,7 @@ from .appointment import (
 )
 from .event import AppointmentEvent
 from .notification import NotificationRead
+from .analytics import AnalyticsRead, BookedOverTime
 
 __all__ = [
     "UserBase", "UserCreate", "UserRegister", "UserLogin", "Token", "UserUpdate", "UserRead",
@@ -17,4 +18,5 @@ __all__ = [
     "ProviderCreate", "ProviderUpdate", "ProviderRead",
     "AppointmentAction", "AppointmentBase", "AppointmentCreate", "AppointmentUpdate", "AppointmentRead",
     "AppointmentEvent", "NotificationRead",
+    "AnalyticsRead", "BookedOverTime",
 ]
