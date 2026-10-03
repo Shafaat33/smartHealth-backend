@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import EmailAlreadyExists, ProviderNotFound
 from app.core.security import hash_password
-from app.models.enums import UserRole
+from app.models.enums import Specialty, UserRole
 from app.models.provider import Provider
 from app.models.user import User
 from app.repositories.provider import ProviderRepository
@@ -35,7 +35,11 @@ class ProviderService:
 
         try:
             self.db.flush()
-            provider = Provider(user_id=user.id)
+            provider = Provider(
+                user_id=user.id,
+                specialty=payload.specialty,
+                bio=payload.bio.strip() if payload.bio else None,
+            )
             self.providers.add(provider)
             self.db.commit()
         except IntegrityError:
@@ -56,5 +60,5 @@ class ProviderService:
             raise ProviderNotFound()
         return provider
 
-    def list(self) -> list[Provider]:
-        return self.providers.list()
+    def list(self, specialty: Specialty | None = None) -> list[Provider]:
+        return self.providers.list(specialty=specialty)

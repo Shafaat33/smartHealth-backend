@@ -3,6 +3,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from app.models.enums import Specialty
 from app.models.provider import Provider
 
 
@@ -28,11 +29,8 @@ class ProviderRepository:
             .where(Provider.user_id == user_id)
         )
 
-    def list(self) -> list[Provider]:
-        return list(
-            self.db.scalars(
-                select(Provider)
-                .options(joinedload(Provider.user))
-                .order_by(Provider.created_at)
-            ).all()
-        )
+    def list(self, specialty: Specialty | None = None) -> list[Provider]:
+        query = select(Provider).options(joinedload(Provider.user))
+        if specialty is not None:
+            query = query.where(Provider.specialty == specialty)
+        return list(self.db.scalars(query.order_by(Provider.created_at)).all())
