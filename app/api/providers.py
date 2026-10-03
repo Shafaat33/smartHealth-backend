@@ -7,7 +7,7 @@ from app.constants import PROVIDER_URL
 from app.core.deps import get_current_user, require_role
 from app.core.exceptions import EmailAlreadyExists, ProviderNotFound
 from app.db.session import get_db
-from app.models.enums import UserRole
+from app.models.enums import Specialty, UserRole
 from app.models.user import User
 from app.schemas.provider import ProviderCreate, ProviderRead
 from app.services.provider import ProviderService
@@ -46,10 +46,11 @@ def get_my_provider(
 
 @router.get("", response_model=list[ProviderRead])
 def list_providers(
+    specialty: Specialty | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    return ProviderService(db).list()
+    return ProviderService(db).list(specialty=specialty)
 
 
 @router.get("/{provider_id}", response_model=ProviderRead)
