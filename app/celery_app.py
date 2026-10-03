@@ -8,7 +8,7 @@ celery_app = Celery(
     "smarthealth",
     broker=REDIS_URL or "redis://localhost:6379/0",
     backend=REDIS_URL or "redis://localhost:6379/0",
-    include=["app.tasks.notifications", "app.tasks.analytics"],
+    include=["app.tasks.notifications", "app.tasks.analytics", "app.tasks.ingestion"],
 )
 celery_app.conf.update(
     task_serializer="json",

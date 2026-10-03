@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -26,3 +27,13 @@ REDIS_URL = os.getenv("REDIS_URL", "")
 OTEL_EXPORTER_OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
 OTEL_SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "smarthealth-api")
 CELERY_METRICS_PORT = int(os.getenv("CELERY_METRICS_PORT", "9000"))
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1536"))
+EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "100"))
+KNOWLEDGE_DIR = os.getenv(
+    "KNOWLEDGE_DIR",
+    str(Path(__file__).resolve().parents[2] / "data" / "knowledge"),
+)
+KNOWLEDGE_CHUNK_SIZE = int(os.getenv("KNOWLEDGE_CHUNK_SIZE", "800"))
+KNOWLEDGE_CHUNK_OVERLAP = int(os.getenv("KNOWLEDGE_CHUNK_OVERLAP", "100"))
