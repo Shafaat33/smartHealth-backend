@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -54,6 +54,8 @@ services:
       KAFKA_APPOINTMENTS_TOPIC: ${KAFKA_APPOINTMENTS_TOPIC:-appointments}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
       OTEL_SERVICE_NAME: smarthealth-api
+      REDIS_URL: redis://redis:6379/0
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     depends_on:
       db:
         condition: service_healthy
@@ -145,6 +147,11 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       REDIS_URL: redis://redis:6379/0
       CELERY_METRICS_PORT: "9000"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      KNOWLEDGE_DIR: /app/data/knowledge
+    volumes:
+      - ./data/knowledge:/app/data/knowledge:ro
     restart: unless-stopped
     depends_on:
       redis:

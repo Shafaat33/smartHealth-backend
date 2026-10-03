@@ -5,6 +5,7 @@ from .patient import Patient
 from .appointment import Appointment
 from .notification import Notification
 from .analytics import AnalyticsDaily, AnalyticsEvent
+from .knowledge import KnowledgeChunk
 
 __all__ = [
     "Base",
@@ -15,4 +16,5 @@ __all__ = [
     "Notification",
     "AnalyticsDaily",
     "AnalyticsEvent",
+    "KnowledgeChunk",
 ]
