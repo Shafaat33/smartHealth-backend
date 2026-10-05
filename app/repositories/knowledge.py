@@ -41,6 +41,18 @@ class KnowledgeRepository:
         )
         return result.rowcount
 
+    def nearest(
+        self,
+        vector: list[float],
+        k: int,
+        max_distance: float,
+    ) -> list[tuple[KnowledgeChunk, float]]:
+        distance = KnowledgeChunk.embedding.cosine_distance(vector).label("distance")
+        rows = self.db.execute(
+            select(KnowledgeChunk, distance).order_by(distance).limit(k)
+        ).all()
+        return [(chunk, dist) for chunk, dist in rows if dist <= max_distance]
+
     def delete_sources_except(self, keep: list[str]) -> int:
         result = self.db.execute(
             delete(KnowledgeChunk).where(KnowledgeChunk.source.not_in(keep))
