@@ -9,6 +9,8 @@ load_dotenv()
 
 from app.models.base import Base
 from app.models import (  # noqa: F401
+    AiConversation,
+    AiMessage,
     AnalyticsDaily,
     AnalyticsEvent,
     Appointment,
