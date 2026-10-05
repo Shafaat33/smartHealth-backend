@@ -27,7 +27,7 @@ async def chat(
     current_user: User = Depends(get_current_user),
 ):
     started = time.perf_counter()
-    events = AssistantService().stream_answer(payload.message.strip())
+    events = AssistantService().stream_answer(payload.message.strip(), current_user)
 
     # Pull the first event (sources) before committing to a 200 so retrieval failures become a 503.
     try:
