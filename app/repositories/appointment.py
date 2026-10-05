@@ -66,6 +66,26 @@ class AppointmentRepository:
             .all()
         )
 
+    def list_active_times_by_providers(
+        self,
+        provider_ids: list[UUID],
+        start: datetime,
+        end: datetime,
+    ) -> set[tuple[UUID, datetime]]:
+        if not provider_ids:
+            return set()
+        rows = self.db.execute(
+            select(Appointment.provider_id, Appointment.appointment_time).where(
+                Appointment.provider_id.in_(provider_ids),
+                Appointment.appointment_time >= start,
+                Appointment.appointment_time < end,
+                Appointment.status.notin_(
+                    [AppointmentStatus.complete, AppointmentStatus.canceled]
+                ),
+            )
+        ).all()
+        return {(provider_id, appointment_time) for provider_id, appointment_time in rows}
+
     def list_by_provider_id(self, provider_id: UUID) -> list[Appointment]:
         return list(
             self.db.scalars(
