@@ -4,8 +4,10 @@ from zoneinfo import ZoneInfo
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.ai.history import format_history_for_router, history_to_messages
 from app.ai.llm import get_chat_model
 from app.ai.schemas import RouterOutput
+from app.ai.tracing import assistant_span
 from app.core.config import ASSISTANT_MAX_RANGE_DAYS, CLINIC_TIMEZONE
 
 
@@ -32,10 +34,17 @@ def _router_chain():
     return get_chat_model().with_structured_output(RouterOutput)
 
 
-async def classify_question(question: str) -> RouterOutput:
+async def classify_question(
+    question: str,
+    history: list[dict[str, str]] | None = None,
+) -> RouterOutput:
     today = _today_clinic()
+    hist_text = format_history_for_router(history or [])
     system = f"""You route patient messages for SmartHealth clinic assistant.
 Today is {today.isoformat()} (clinic timezone {CLINIC_TIMEZONE}).
+
+Recent conversation:
+{hist_text}
 
 Choose intent:
 - knowledge: clinic info, specialties, test prep, booking FAQ, appointment steps (no live data)
@@ -48,9 +57,11 @@ For find_care set specialty to the best matching enum when possible.
 Set date_from/date_to when user mentions a day or week (inclusive, clinic dates).
 search_query must stand alone for document search (rewrite with symptoms/topics)."""
 
-    result = await _router_chain().ainvoke(
-        [SystemMessage(content=system), HumanMessage(content=question)]
-    )
+    messages = [SystemMessage(content=system)]
+    messages.extend(history_to_messages(history or []))
+    messages.append(HumanMessage(content=question))
+    with assistant_span("assistant.router"):
+        result = await _router_chain().ainvoke(messages)
     if isinstance(result, RouterOutput):
         return result
     return RouterOutput.model_validate(result)

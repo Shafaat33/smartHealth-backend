@@ -58,6 +58,11 @@ class BookingHoldExpired(Exception):
         super().__init__(message)
 
 
+class ConversationNotFound(Exception):
+    def __init__(self, message: str = "Conversation not found"):
+        super().__init__(message)
+
+
 class AppointmentNotReschedulable(Exception):
     def __init__(self, message: str = "Only pending or confirmed appointments can be rescheduled"):
         super().__init__(message)
