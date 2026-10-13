@@ -8,9 +8,3 @@ wheels/
 
 # Virtual environments
 .venv
-
-# Secrets
-.env
-
-# Local docs
-frontend-prd.md
