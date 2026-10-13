@@ -1,0 +1,41 @@
+from uuid import UUID
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, joinedload
+
+from app.models.patient import Patient
+
+
+class PatientRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def add(self, patient: Patient) -> Patient:
+        self.db.add(patient)
+        return patient
+
+    def get_by_id(self, patient_id: UUID) -> Patient | None:
+        return self.db.scalar(
+            select(Patient)
+            .options(joinedload(Patient.user))
+            .where(Patient.id == patient_id)
+        )
+
+    def get_by_user_id(self, user_id: UUID) -> Patient | None:
+        return self.db.scalar(
+            select(Patient)
+            .options(joinedload(Patient.user))
+            .where(Patient.user_id == user_id)
+        )
+
+    def list(self) -> list[Patient]:
+        return list(
+            self.db.scalars(
+                select(Patient)
+                .options(joinedload(Patient.user))
+                .order_by(Patient.created_at)
+            ).all()
+        )
+
+    def count(self) -> int:
+        return int(self.db.scalar(select(func.count()).select_from(Patient)) or 0)
