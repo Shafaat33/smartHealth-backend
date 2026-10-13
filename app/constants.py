@@ -1,7 +1,0 @@
-AUTH_URL = "/auth"
-PATIENT_URL = "/patients"
-PROVIDER_URL = "/providers"
-APPOINTMENT_URL = "/appointments"
-TEMPORAL_URL = "/temporal"
-NOTIFICATION_URL = "/notifications"
-ANALYTICS_URL = "/analytics"
