@@ -1,307 +1,516 @@
-# smartHealth-backend
+# SmartHealth Backend
 
-Backend for a clinic scheduling system. Patients book appointments, providers and front-desk staff move those appointments through a hold-and-confirm workflow, and an assistant answers clinic questions from uploaded documents plus the signed-in user's own schedule.
+SmartHealth is the backend for a clinic's appointment desk. Patients sign up and book time with a provider. Providers and front-desk staff confirm, complete, or cancel those bookings. A built-in assistant answers everyday questions such as "how do I prepare for a lab test?" or "when is my next appointment?", using the clinic's own documents and the signed-in user's schedule.
 
-The HTTP API is FastAPI. Postgres stores the operational data and the assistant's document embeddings. Temporal owns the booking hold. Kafka carries appointment events. Celery, backed by Redis, delivers notifications, records analytics, and ingests knowledge documents.
+The goal is booking that stays correct when something goes wrong. If a patient grabs a slot and nobody confirms it, the slot frees itself. If a service restarts mid-booking, the booking picks up where it left off. Every change leaves a trail of notifications, analytics, logs, traces, and metrics.
 
-## Stack
+## Contents
 
-| Piece | Used for |
+- [What's inside](#whats-inside)
+- [Quick start](#quick-start)
+- [Your first booking](#your-first-booking)
+- [How a booking works](#how-a-booking-works)
+- [Who can do what](#who-can-do-what)
+- [Project layout](#project-layout)
+- [Services in Docker Compose](#services-in-docker-compose)
+- [Running without Docker](#running-without-docker)
+- [Configuration](#configuration)
+- [API reference](#api-reference)
+- [Temporal in depth](#temporal-in-depth)
+- [Events and background jobs](#events-and-background-jobs)
+- [The assistant](#the-assistant)
+- [Observability](#observability)
+- [Known gaps](#known-gaps)
+
+## What's inside
+
+Each tool here has one job:
+
+| Tool | Its job |
 | --- | --- |
-| FastAPI, Uvicorn, Pydantic | HTTP API, validation, and OpenAPI docs |
-| SQLAlchemy, Alembic, psycopg2 | Models, queries, and schema migrations |
-| PostgreSQL + pgvector | Application data and embedding search |
-| PyJWT, bcrypt | Access tokens and password hashing |
-| Temporal | Durable booking hold: wait, accept signals, release the slot on timeout |
-| Apache Kafka | Appointment event log |
-| Celery, Redis | Notification delivery, analytics writes, PDF ingestion |
-| OpenAI, LangGraph, LangChain | Assistant chat, routing, and embeddings |
-| pypdf | Reading clinic PDFs in `data/knowledge` |
-| OpenTelemetry, Jaeger | Request and assistant traces |
-| Prometheus, Grafana | API and Celery metrics |
+| FastAPI, Pydantic, Uvicorn | The HTTP API, request validation, and interactive docs |
+| PostgreSQL + pgvector | All application data, plus vector search for the assistant |
+| SQLAlchemy, Alembic | Database models and migrations |
+| PyJWT, bcrypt | Login tokens and password hashing |
+| Temporal | Holding a booking open, waiting for a decision, and releasing the slot if none arrives |
+| Kafka | A log of everything that happens to an appointment |
+| Celery + Redis | Short background jobs: notifications, analytics, document ingestion |
+| OpenAI, LangGraph, LangChain | The assistant's reasoning, routing, and embeddings |
+| pypdf | Reading the clinic PDFs in `data/knowledge` |
+| OpenTelemetry + Jaeger | Following one request across the system |
+| Prometheus + Grafana | Counting and graphing what the system is doing |
 
-## How a booking moves
+Temporal and Celery do different work here. Temporal handles processes that have to wait, sometimes for minutes or days, and must survive restarts. Celery handles small tasks that should run soon and then finish.
 
-1. A patient calls `POST /appointments`. The API inserts the row as `pending` and commits.
-2. The API starts a Temporal workflow whose id is `booking-{appointment_id}`. The workflow waits `BOOKING_HOLD_SECONDS` (default 60).
-3. The API publishes an `appointment.booked` event to Kafka and writes the notification.
-4. A provider or front-desk user confirms, completes, or cancels with `PATCH /appointments/{id}`. That call signals the same workflow.
-5. If nobody confirms before the hold expires, the Temporal worker cancels the still-pending row and frees the slot.
-6. The Kafka consumer turns each event into two Celery tasks: `send_notification` and `record_analytics`.
+## Quick start
 
-Confirm does not finish the workflow. After confirm, the same workflow stays open until the visit is completed or canceled. The hold timer applies only to the unconfirmed window.
+You need [Docker](https://docs.docker.com/get-docker/) with Docker Compose. An OpenAI API key is only needed for the assistant and document ingestion.
 
-If Temporal cannot start the hold, the API cancels the pending row and returns 503, so a slot is not left reserved without a timer.
-
-Reschedule updates the appointment time in Postgres. It does not reset the Temporal hold.
-
-## Processes
-
-`docker-compose.yml` runs one application image and the infrastructure around it. The API, Temporal worker, Kafka consumer, and Celery worker share that image and differ only by command.
-
-| Service | Command / image | Port | Role |
-| --- | --- | --- | --- |
-| `api` | `scripts/entrypoint.sh` (migrate, then Uvicorn) | 8000 | HTTP API. Temporal client. |
-| `worker` | `python -m app.worker` | — | Temporal worker on `smarthealth-task-queue` |
-| `kafka-consumer` | `python -m app.consumers.appointments` | — | Reads the `appointments` topic and enqueues Celery tasks |
-| `celery` | `celery -A app.celery_app worker` | 9000 | Background jobs. Prometheus metrics on this port. |
-| `db` | `pgvector/pgvector:pg16` | 5433 | App database. Temporal uses the same Postgres server for its own databases. |
-| `temporal` | Temporal auto-setup | 7233 | Workflow server |
-| `temporal-ui` | Temporal Web UI | 8088 | Inspect workflow history |
-| `kafka` | Apache Kafka (KRaft) | 9094 | Broker. In-cluster clients use `kafka:9092`. |
-| `redis` | Redis 7 | 6379 | Celery broker and result backend |
-| `jaeger` | Jaeger all-in-one | 16686 | Trace UI. OTLP receiver on 4317. |
-| `prometheus` | Prometheus | 9090 | Scrapes `api:8000` and `celery:9000` |
-| `grafana` | Grafana | 3000 | Dashboard provisioned from `observability/grafana` |
-
-The API container runs `alembic upgrade head` before it starts serving.
-
-## Repository layout
-
-Request handling follows `api` → `services` → `repositories` → `models`.
-
-| Path | Responsibility |
-| --- | --- |
-| `app/main.py` | FastAPI app: CORS, request ids, tracing, metrics, routers |
-| `app/api` | Route handlers. They validate auth, call a service, and map errors to HTTP. |
-| `app/services` | Business rules |
-| `app/repositories` | Queries and writes |
-| `app/models` | SQLAlchemy tables |
-| `app/schemas` | Pydantic request and response models |
-| `app/core` | Config, JWT, database sessions, Kafka producer, Temporal client, tracing, metrics |
-| `app/workflows` | Temporal workflows (`BookingWorkflow`, `PingWorkflow`) |
-| `app/activities` | Temporal activities. These are the only workflow steps that touch the database. |
-| `app/worker.py` | Temporal worker process |
-| `app/tasks` | Celery tasks |
-| `app/consumers` | Kafka consumer |
-| `app/ai` | Assistant graph, prompts, tools, retrieval helpers |
-| `alembic` | Migrations |
-| `data/knowledge` | Clinic PDFs the assistant searches |
-| `observability` | Prometheus scrape config and Grafana dashboard |
-| `scripts/entrypoint.sh` | API container startup |
-
-`main.py` at the repository root is the project scaffold. Uvicorn loads `app.main:app`.
-
-## Roles
-
-Registration always creates a `patient` user and a patient profile.
-
-| Role | What they can do |
-| --- | --- |
-| `patient` | Book, list, and reschedule their own appointments. Use the assistant. Read their notifications. |
-| `provider` | Created by front desk. Confirm, complete, or cancel their own appointments. Reschedule them. Read the provider directory. |
-| `front_desk` | Create providers. List every patient and every appointment. Update any appointment. Read analytics. Queue knowledge ingestion. |
-
-Confirm, complete, and cancel are provider or front-desk actions. A patient cannot move an appointment out of `pending`.
-
-Appointment status transitions:
-
-- `pending` → `confirmed`, `complete`, or `canceled`
-- `confirmed` → `complete` or `canceled`
-- `complete` and `canceled` do not change again
-
-## Run
-
-Install [Docker](https://docs.docker.com/get-docker/) and Docker Compose. From the repository root, create a `.env` file:
+**1. Create a `.env` file** in the project root:
 
 ```bash
 POSTGRES_USER=smarthealth
-POSTGRES_PASSWORD=smarthealth
+POSTGRES_PASSWORD=change-me
 POSTGRES_DB=smarthealth
-SECRET_KEY=replace-with-a-long-random-string
-OPENAI_API_KEY=sk-...
+SECRET_KEY=paste-a-long-random-string-here
+OPENAI_API_KEY=your-openai-key
 ```
 
-`DATABASE_URL` and `SECRET_KEY` are required by the app. Compose builds `DATABASE_URL` for the containers. `OPENAI_API_KEY` is required for knowledge ingestion and the assistant.
+To generate a good `SECRET_KEY`:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+`.env` is gitignored. Keep it that way, and never commit real keys.
+
+**2. Start everything:**
 
 ```bash
 docker compose up --build
 ```
 
-When the API is up:
+The first run takes a few minutes while images download and Temporal sets up its database. The API runs migrations on startup, so you don't need to create tables by hand.
 
-- API docs: http://localhost:8000/docs
-- Health: http://localhost:8000/health
-- Temporal UI: http://localhost:8088
-- Jaeger: http://localhost:16686
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000 (anonymous admin is enabled in Compose)
+**3. Check that it's alive:**
 
-The browser frontend is expected at `http://localhost:5173` or `http://127.0.0.1:5173`. Other origins are rejected by CORS.
+```bash
+curl http://localhost:8000/health
+# {"health":"ok"}
 
-### Local API without Compose
+curl -X POST http://localhost:8000/temporal/ping
+# {"result":"ok"}
+```
 
-Python 3.13 and [uv](https://docs.astral.sh/uv/) match the Docker image. You still need Postgres (with pgvector), Temporal, Redis, and Kafka if you want those paths.
+If the ping returns `ok`, the API, Temporal server, and Temporal worker are all connected.
+
+**4. Open the dashboards:**
+
+| What | Where |
+| --- | --- |
+| Interactive API docs | http://localhost:8000/docs |
+| Temporal UI (see every booking workflow) | http://localhost:8088 |
+| Jaeger (request traces) | http://localhost:16686 |
+| Prometheus | http://localhost:9090 |
+| Grafana | http://localhost:3000 |
+
+Grafana opens without a login in this local setup.
+
+## Your first booking
+
+Here's the full flow end to end with `curl`. The interactive docs at `/docs` work too.
+
+**Sign up as a patient.** Public registration always creates a patient account:
+
+```bash
+curl -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Ayesha Khan", "email": "ayesha@example.com", "password": "a-strong-password"}'
+```
+
+**Log in and keep the token:**
+
+```bash
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "ayesha@example.com", "password": "a-strong-password"}'
+# {"access_token": "eyJ...", "token_type": "bearer"}
+```
+
+Send that token on every later request as `Authorization: Bearer <token>`.
+
+**Create a front-desk user.** Nothing creates the first front-desk user for you. Register a normal account, then promote it in the database:
+
+```bash
+docker compose exec db psql -U smarthealth -d smarthealth \
+  -c "UPDATE users SET role = 'front_desk' WHERE email = 'desk@example.com';"
+```
+
+Log in again after the change so the new role is in the token.
+
+**Add a provider.** Front desk creates providers with `POST /providers`. The provider gets their own login.
+
+**Book.** As the patient, call `POST /appointments` with a `provider_id` and a future `appointment_time`. The appointment starts as `pending`, and a 60-second hold begins. You can watch that hold in the Temporal UI as a workflow named `booking-<appointment id>`.
+
+**Confirm it.** As that provider or as front desk, call:
+
+```bash
+curl -X PATCH http://localhost:8000/appointments/<appointment-id> \
+  -H "Authorization: Bearer <provider-or-desk-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "confirm"}'
+```
+
+If you wait longer than 60 seconds instead, the slot is released and the appointment becomes `canceled`. Confirming after that returns 409, "Booking hold expired".
+
+## How a booking works
+
+```mermaid
+sequenceDiagram
+    participant P as Patient
+    participant API as FastAPI
+    participant DB as Postgres
+    participant T as Temporal
+    participant W as Temporal worker
+    participant K as Kafka
+    participant C as Celery
+
+    P->>API: POST /appointments
+    API->>DB: Save appointment as pending
+    API->>T: Start booking-{id} workflow (60s hold)
+    API->>K: appointment.booked event
+    K->>C: Notification and analytics tasks
+    alt Confirmed within the hold
+        API->>T: Signal "confirm"
+        API->>DB: Mark confirmed
+    else Nobody confirms in time
+        T->>W: Hold expired
+        W->>DB: Cancel the pending appointment
+    end
+```
+
+In words:
+
+1. A patient books. The appointment is saved as `pending`.
+2. The API starts a Temporal workflow for that one appointment. The workflow waits up to `BOOKING_HOLD_SECONDS` (60 by default).
+3. An `appointment.booked` event goes to Kafka, and the patient and provider get a notification.
+4. A provider or front-desk user confirms, completes, or cancels. The API passes that decision to the waiting workflow as a signal.
+5. If nobody confirms in time, the Temporal worker cancels the appointment and frees the slot.
+
+The design also covers a few failure cases:
+
+- **Temporal is down when someone books.** The API cancels the new appointment and returns 503. A slot is never left reserved with no timer to release it.
+- **The API restarts during a hold.** The hold lives in Temporal, not in the API process, so the timer keeps running.
+- **Two people grab the same slot.** A database constraint allows only one active appointment per provider per time. The second booking gets 409.
+- **Confirm is clicked twice.** The second click sees the appointment is already confirmed and returns without signaling again.
+
+After confirmation, the same workflow stays open until the visit is completed or canceled. The 60-second timer only covers the unconfirmed window.
+
+Rescheduling changes the time in Postgres. It does not restart the hold.
+
+## Who can do what
+
+There are three roles.
+
+**Patients** sign up themselves. They can book, view, and reschedule their own appointments, read their notifications, and chat with the assistant.
+
+**Providers** are created by front desk. They can confirm, complete, cancel, and reschedule their own appointments, and browse the provider directory.
+
+**Front desk** can do almost everything. They create providers, see every patient and appointment, update any appointment, view analytics, and load clinic documents into the assistant.
+
+Patients can't confirm or cancel through `PATCH /appointments/{id}`. That stays with providers and front desk.
+
+An appointment moves through these statuses:
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: booked
+    pending --> confirmed
+    pending --> complete
+    pending --> canceled: canceled or hold expired
+    confirmed --> complete
+    confirmed --> canceled
+    complete --> [*]
+    canceled --> [*]
+```
+
+`complete` and `canceled` are final.
+
+## Project layout
+
+Code follows the same path for every request: **route → service → repository → model**. Routes deal with HTTP, services hold the business rules, repositories run the queries, and models describe the tables.
+
+```text
+smartHealth-backend/
+├── app/
+│   ├── main.py           # The FastAPI app: middleware, metrics, routes
+│   ├── api/              # HTTP routes, one file per area
+│   ├── services/         # Business rules (booking, auth, notifications, ...)
+│   ├── repositories/     # Database queries
+│   ├── models/           # SQLAlchemy tables
+│   ├── schemas/          # Request and response shapes
+│   ├── core/             # Config, auth, Kafka, Temporal client, tracing, metrics
+│   ├── workflows/        # Temporal workflows
+│   ├── activities/       # Temporal steps that touch the database
+│   ├── worker.py         # Starts the Temporal worker
+│   ├── tasks/            # Celery tasks
+│   ├── consumers/        # Kafka consumer
+│   └── ai/               # Assistant: graph, prompts, tools, safety checks
+├── alembic/              # Database migrations
+├── data/knowledge/       # Clinic PDFs the assistant reads
+├── observability/        # Prometheus and Grafana config
+├── scripts/              # Container entrypoint, PDF generator
+├── docs/                 # Architecture notes
+└── prds/                 # Original product requirements
+```
+
+`main.py` at the repository root is leftover project scaffolding. The real app is `app/main.py`.
+
+## Services in Docker Compose
+
+The four application processes are built from the same image. Only their start command differs.
+
+| Service | What it does | Port |
+| --- | --- | --- |
+| `api` | Runs migrations, then serves the HTTP API | 8000 |
+| `worker` | Runs Temporal workflows and activities | — |
+| `kafka-consumer` | Reads appointment events and queues Celery jobs | — |
+| `celery` | Runs background jobs and exposes their metrics | 9000 |
+| `db` | Postgres 16 with pgvector | 5433 |
+| `temporal` | The Temporal server | 7233 |
+| `temporal-ui` | Browse workflows | 8088 |
+| `kafka` | Event broker. Containers use `kafka:9092`. | 9094 |
+| `redis` | Celery's queue and result store | 6379 |
+| `jaeger` | Trace viewer and collector | 16686, 4317 |
+| `prometheus` | Collects metrics from the API and Celery | 9090 |
+| `grafana` | Dashboards | 3000 |
+
+Postgres listens on 5433 on your machine to avoid clashing with a local Postgres on 5432. Temporal stores its own data on the same Postgres server, in separate databases.
+
+## Running without Docker
+
+You can run the API on your machine with Python 3.13 and [uv](https://docs.astral.sh/uv/). You still need Postgres with pgvector. Temporal, Kafka, and Redis are only needed for the features that use them. An easy middle ground is to run just the infrastructure in Docker:
+
+```bash
+docker compose up db temporal redis kafka
+```
+
+Then start the API locally:
 
 ```bash
 uv sync
-export DATABASE_URL=postgresql+psycopg2://smarthealth:smarthealth@localhost:5433/smarthealth
-export SECRET_KEY=replace-with-a-long-random-string
+export DATABASE_URL=postgresql+psycopg2://smarthealth:change-me@localhost:5433/smarthealth
+export SECRET_KEY=paste-a-long-random-string-here
+export KAFKA_BOOTSTRAP_SERVERS=localhost:9094
+export REDIS_URL=redis://localhost:6379/0
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-Run the workers in other terminals when you need them:
+Start the background processes in separate terminals, with the same environment:
 
 ```bash
-uv run python -m app.worker
-uv run python -m app.consumers.appointments
+uv run python -m app.worker                        # Temporal worker
+uv run python -m app.consumers.appointments        # Kafka consumer
 uv run celery -A app.celery_app worker --loglevel=INFO --pool=solo
 ```
 
+Without the Temporal worker, bookings can be created, but their holds never resolve.
+
 ## Configuration
 
-Values come from the environment. `app/core/config.py` loads a `.env` file when one is present. Compose sets the in-cluster addresses.
+Everything is configured through environment variables. A `.env` file in the project root is loaded automatically. Only two variables are required; the rest have defaults that work locally.
 
-| Variable | Default | Purpose |
+**Required**
+
+| Variable | What it's for |
+| --- | --- |
+| `DATABASE_URL` | Where the database lives. Compose sets this for you. |
+| `SECRET_KEY` | Signs login tokens. Use a long random value. |
+
+**Auth**
+
+| Variable | Default | What it's for |
 | --- | --- | --- |
-| `DATABASE_URL` | required | SQLAlchemy URL |
-| `SECRET_KEY` | required | JWT signing key |
-| `JWT_ALGORITHM` | `HS256` | JWT algorithm |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Access token lifetime |
-| `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal frontend |
-| `TEMPORAL_TASK_QUEUE` | `smarthealth-task-queue` | Queue the API and worker share |
-| `BOOKING_HOLD_SECONDS` | `60` | How long a pending booking waits for confirm |
-| `KAFKA_BOOTSTRAP_SERVERS` | empty | When empty, the API skips publishing |
-| `KAFKA_APPOINTMENTS_TOPIC` | `appointments` | Appointment event topic |
-| `KAFKA_CONSUMER_GROUP` | `smarthealth-appointments-logger` | Consumer group id |
-| `REDIS_URL` | empty | Celery broker. Falls back to `redis://localhost:6379/0` inside Celery. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | empty | When empty, tracing stays off |
-| `OTEL_SERVICE_NAME` | `smarthealth-api` | Service name in Jaeger |
-| `CELERY_METRICS_PORT` | `9000` | Celery worker metrics |
-| `OPENAI_API_KEY` | empty | Chat and embeddings |
-| `CHAT_MODEL` | `gpt-4o-mini` | Assistant model |
-| `EMBEDDING_MODEL` | `text-embedding-3-small` | Ingestion embeddings |
-| `EMBEDDING_DIM` | `1536` | Vector size stored in pgvector |
-| `KNOWLEDGE_DIR` | `data/knowledge` | PDF directory |
-| `KNOWLEDGE_CHUNK_SIZE` | `800` | Characters per chunk |
+| `JWT_ALGORITHM` | `HS256` | Token signing algorithm |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | How long a login lasts |
+
+**Booking and Temporal**
+
+| Variable | Default | What it's for |
+| --- | --- | --- |
+| `BOOKING_HOLD_SECONDS` | `60` | How long an unconfirmed booking holds its slot |
+| `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address |
+| `TEMPORAL_TASK_QUEUE` | `smarthealth-task-queue` | Queue shared by the API and worker |
+
+**Events and jobs**
+
+| Variable | Default | What it's for |
+| --- | --- | --- |
+| `KAFKA_BOOTSTRAP_SERVERS` | empty | Kafka address. If empty, events are not published. |
+| `KAFKA_APPOINTMENTS_TOPIC` | `appointments` | Topic for appointment events |
+| `KAFKA_CONSUMER_GROUP` | `smarthealth-appointments-logger` | Consumer group name |
+| `REDIS_URL` | empty | Celery's broker. Celery falls back to `redis://localhost:6379/0`. |
+| `CELERY_METRICS_PORT` | `9000` | Where Celery exposes metrics |
+
+**Assistant**
+
+| Variable | Default | What it's for |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | empty | Needed for chat and ingestion |
+| `CHAT_MODEL` | `gpt-4o-mini` | Model that writes answers |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Model that embeds documents |
+| `EMBEDDING_DIM` | `1536` | Embedding size. Must match the model. |
+| `KNOWLEDGE_DIR` | `data/knowledge` | Folder of PDFs to ingest |
+| `KNOWLEDGE_CHUNK_SIZE` | `800` | Characters per document chunk |
 | `KNOWLEDGE_CHUNK_OVERLAP` | `100` | Overlap between chunks |
-| `RETRIEVAL_TOP_K` | `4` | Chunks retrieved per question |
-| `CLINIC_TIMEZONE` | `Asia/Karachi` | Clinic clock for slot tools |
-| `CLINIC_OPEN` / `CLINIC_CLOSE` | `09:00` / `17:00` | Clinic hours |
-| `CLINIC_DAYS` | `0,1,2,3,4` | Open weekdays, Monday = 0 |
-| `SLOT_MINUTES` | `30` | Slot length |
+| `RETRIEVAL_TOP_K` | `4` | Chunks pulled in per question |
 
-## API
+**Clinic hours** (used when the assistant suggests open slots)
 
-Send `Authorization: Bearer <access_token>` on every route except register, login, health, metrics, and the Temporal ping. Interactive schemas are at `/docs`.
-
-### Auth
-
-| Method | Path | Who |
+| Variable | Default | What it's for |
 | --- | --- | --- |
-| `POST` | `/auth/register` | Public. Creates a patient. |
-| `POST` | `/auth/login` | Public. Returns `{ "access_token", "token_type": "bearer" }`. |
-| `GET` | `/auth/me` | Any signed-in user |
+| `CLINIC_TIMEZONE` | `Asia/Karachi` | The clinic's local time |
+| `CLINIC_OPEN`, `CLINIC_CLOSE` | `09:00`, `17:00` | Opening hours |
+| `CLINIC_DAYS` | `0,1,2,3,4` | Open days, Monday is 0 |
+| `SLOT_MINUTES` | `30` | Length of a slot |
+
+**Tracing**
+
+| Variable | Default | What it's for |
+| --- | --- | --- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | empty | Where to send traces. If empty, tracing is off. |
+| `OTEL_SERVICE_NAME` | `smarthealth-api` | Name shown in Jaeger |
+
+## API reference
+
+The interactive docs at http://localhost:8000/docs list every field. This section is a map.
+
+Every route needs `Authorization: Bearer <token>` except register, login, `/health`, `/metrics`, and `/temporal/ping`.
+
+### Accounts
+
+| Endpoint | Who | What it does |
+| --- | --- | --- |
+| `POST /auth/register` | Anyone | Creates a patient account |
+| `POST /auth/login` | Anyone | Returns an access token |
+| `GET /auth/me` | Signed in | Your account |
 
 ### Patients and providers
 
-| Method | Path | Who |
+| Endpoint | Who | What it does |
 | --- | --- | --- |
-| `GET` | `/patients/me` | The signed-in user's patient profile |
-| `GET` | `/patients` | Front desk |
-| `GET` | `/patients/{id}` | Signed-in user, subject to service checks |
-| `POST` | `/providers` | Front desk |
-| `GET` | `/providers/me` | The signed-in provider |
-| `GET` | `/providers` | Any signed-in user |
-| `GET` | `/providers/{id}` | Any signed-in user |
+| `GET /patients/me` | Patient | Your patient profile |
+| `GET /patients` | Front desk | All patients |
+| `GET /patients/{id}` | That patient, or front desk | One patient |
+| `POST /providers` | Front desk | Create a provider and their login |
+| `GET /providers/me` | Provider | Your provider profile |
+| `GET /providers` | Signed in | Provider directory |
+| `GET /providers/{id}` | Signed in | One provider |
 
 ### Appointments
 
-| Method | Path | Who |
+| Endpoint | Who | What it does |
 | --- | --- | --- |
-| `POST` | `/appointments` | Patient. Body includes `provider_id` and `appointment_time`. Starts the Temporal hold. |
-| `GET` | `/appointments` | Front desk sees all. Patients and providers see their own. |
-| `GET` | `/appointments/{id}` | Owner, or front desk |
-| `PATCH` | `/appointments/{id}` | Owning provider or front desk. Body: `{ "action": "confirm" \| "complete" \| "canceled" }`. |
-| `POST` | `/appointments/{id}/reschedule` | Patient, owning provider, or front desk, while the appointment is `pending` or `confirmed` |
+| `POST /appointments` | Patient | Book a slot and start the hold |
+| `GET /appointments` | Signed in | Front desk sees all. Everyone else sees their own. |
+| `GET /appointments/{id}` | Owner, or front desk | One appointment |
+| `PATCH /appointments/{id}` | The provider, or front desk | `{"action": "confirm"}`, `"complete"`, or `"canceled"` |
+| `POST /appointments/{id}/reschedule` | Patient, provider, or front desk | Move a pending or confirmed appointment |
 
-A slot conflict returns 409. A hold that has already finished returns 409 with "Booking hold expired". Temporal being unreachable returns 503.
+Common errors:
 
-### Notifications, analytics, knowledge
+| Status | Meaning |
+| --- | --- |
+| 400 | The time is in the past |
+| 403 | It's not your appointment |
+| 404 | The patient, provider, or appointment doesn't exist |
+| 409 | The slot is taken, the status change isn't allowed, or the booking hold already expired |
+| 503 | Temporal is unreachable, so scheduling is paused |
 
-| Method | Path | Who |
+### Notifications, analytics, and documents
+
+| Endpoint | Who | What it does |
 | --- | --- | --- |
-| `GET` | `/notifications` | The signed-in user's notifications |
-| `GET` | `/analytics` | Front desk. Totals, cancellation rate, bookings by day. |
-| `POST` | `/knowledge/ingest` | Front desk. Queues the Celery ingestion task and returns 202 with a `task_id`. |
+| `GET /notifications` | Signed in | Your notifications |
+| `GET /analytics` | Front desk | Total patients, completed visits, cancellation rate, bookings per day |
+| `POST /knowledge/ingest` | Front desk | Queue the clinic PDFs for the assistant. Returns 202 and a `task_id`. |
 
 ### Assistant
 
-| Method | Path | Who |
+| Endpoint | Who | What it does |
 | --- | --- | --- |
-| `POST` | `/assistant/chat` | Any signed-in user. Streams server-sent events. |
-| `GET` | `/assistant/conversations` | The caller's conversations |
-| `GET` | `/assistant/conversations/{id}/messages` | The caller's messages in that conversation |
+| `POST /assistant/chat` | Signed in | Ask a question. The answer streams back as server-sent events. |
+| `GET /assistant/conversations` | Signed in | Your past conversations |
+| `GET /assistant/conversations/{id}/messages` | Signed in | Messages in one of your conversations |
 
-### Operations
+### Health and operations
 
-| Method | Path | Who |
-| --- | --- | --- |
-| `GET` | `/health` | Public. Process liveness only. It does not check Postgres, Temporal, Kafka, or Redis. |
-| `GET` | `/metrics` | Prometheus scrape. Hidden from the OpenAPI schema. |
-| `POST` | `/temporal/ping` | Public smoke test. Runs `PingWorkflow` and returns `{"result": "ok"}` when the worker is connected. |
+| Endpoint | What it does |
+| --- | --- |
+| `GET /health` | Confirms the API process is running. It does not check the database or other services. |
+| `GET /metrics` | Prometheus metrics |
+| `POST /temporal/ping` | Runs a tiny workflow to confirm Temporal and the worker are connected |
 
-## Temporal
+## Temporal in depth
 
-Temporal is used for the booking hold because that flow has to wait, accept a later signal, and keep going if the API process restarts. Celery is not used for this. Celery jobs are short tasks that do not stay open waiting for the next user action.
+A booking hold needs three things: to wait for a while, to react when someone confirms, and to keep its place if a process restarts. A Celery job or an in-memory timer can't do all three, so the hold is a Temporal workflow.
 
-There is one workflow per appointment. There are no child workflows, workflow queries, cron schedules, or `continue_as_new`.
+Each appointment gets exactly one workflow, with the id `booking-{appointment_id}`. Tying the id to the appointment means the same booking can't start two timers. This project uses a single workflow per booking. There are no child workflows, queries, schedules, or `continue_as_new`.
 
-### `BookingWorkflow`
+### The booking workflow
 
-Defined in `app/workflows/booking.py`. Started from `app/core/temporal.py` by `start_booking_hold`. Signaled by `signal_booking`.
+`BookingWorkflow` lives in `app/workflows/booking.py`.
 
-The workflow keeps two in-memory flags, `_confirmed` and `_terminal`. The `resolve` signal sets them:
+1. It starts when a patient books and waits for a signal, up to the hold time.
+2. If nobody signals in time, it runs `release_slot_if_pending`. That activity cancels the appointment only if it is still `pending`, so an appointment confirmed at the last second is never undone.
+3. If `confirm` arrives, the workflow keeps waiting, with no time limit, for the visit to be completed or canceled.
+4. When `complete` or `canceled` arrives, it runs `apply_appointment_status` to save the final status, then ends.
 
-- `confirm` sets `_confirmed` and leaves the workflow running.
-- `complete` or `canceled` sets `_terminal` and ends the workflow.
+All database work happens in **activities** (`app/activities/booking.py`). The workflow itself only waits and decides. That keeps the workflow deterministic, which is what lets Temporal replay it safely after a crash.
 
-`run` waits until one of those signals arrives or `hold_seconds` elapses.
+Each activity has 30 seconds to finish. If a status change isn't allowed, for example completing a canceled visit, the activity fails without retrying, since retrying wouldn't help. Other failures use Temporal's default retries.
 
-- On timeout it runs `release_slot_if_pending`, which cancels the row only if it is still `pending`.
-- On confirm it waits again, with no timeout, for `complete` or `canceled`.
-- On a terminal signal it runs `apply_appointment_status`.
+### How the API talks to it
 
-Workflow code does not open a database session. Activities do, in the worker process, so the workflow stays deterministic and Temporal can replay it. Activity imports sit inside `workflow.unsafe.imports_passed_through()`.
+`app/core/temporal.py` has the two helpers the API uses:
 
-`apply_appointment_status` marks an illegal status transition as a non-retryable application error. Other activity failures use the SDK default retry. Each booking activity has a 30-second start-to-close timeout.
+- `start_booking_hold` starts the workflow and returns immediately. The patient doesn't wait 60 seconds for a response.
+- `signal_booking` checks that the workflow is still running, sends the decision, and for complete or cancel waits until the workflow has saved it. If the workflow already finished, the API returns 409.
 
-The API writes `confirmed` itself after the confirm signal, because that signal does not finish the workflow. For complete and cancel, the API waits for the workflow result, then calls the same status update again. The second write is a no-op when the status already matches.
+For `confirm`, the API saves the new status itself, since confirming doesn't end the workflow. For complete and cancel, the workflow saves it first. The API's follow-up write sees the status already matches and does nothing.
 
-Workflow id `booking-{appointment_id}` is the idempotency key. A second start for the same appointment targets the same execution.
+### The worker
 
-### `PingWorkflow`
-
-`POST /temporal/ping` uses `execute_workflow`, so the HTTP call waits until the `ping` activity returns `"ok"`. Each call uses a new id, `ping-{uuid}`.
-
-The worker in `app/worker.py` registers both workflows and the three activities (`ping`, `release_slot_if_pending`, `apply_appointment_status`) on one task queue. It retries the Temporal connection every 2 seconds at startup.
+`app/worker.py` connects to Temporal, retrying every 2 seconds until the server is up. It then runs both workflows (`BookingWorkflow` and the `PingWorkflow` health check) and their three activities on the `smarthealth-task-queue` queue.
 
 ## Events and background jobs
 
-Appointment changes call `NotificationService.record`. That publishes an `AppointmentEvent` to Kafka and also writes the notification and analytics row in the request. Publishing is skipped when `KAFKA_BOOTSTRAP_SERVERS` is empty. A publish failure is logged and does not fail the HTTP request.
+Whenever an appointment changes, the API:
 
-The consumer (`app/consumers/appointments.py`) reads the topic, commits the offset only after it enqueues work, and calls:
+1. Publishes an event such as `appointment.booked` or `appointment.canceled` to Kafka.
+2. Saves the notification and analytics record right away.
 
-- `send_notification` — writes the in-app notification if that user, appointment, and event type do not already have one
-- `record_analytics` — stores the analytics fact for the event
+If Kafka is down, the failure is logged and the request still succeeds.
 
-`ingest_knowledge` reads the PDFs in `data/knowledge`, splits them, embeds the chunks with OpenAI, and stores them in pgvector. Front desk triggers it with `POST /knowledge/ingest`. The Celery service mounts that directory read-only at `/app/data/knowledge`.
+The Kafka consumer (`app/consumers/appointments.py`) reads each event and hands it to two Celery jobs:
 
-## Assistant
+- `send_notification` saves the notification, skipping it if that exact one already exists, so replays don't create duplicates
+- `record_analytics` saves the analytics record
 
-`POST /assistant/chat` runs a LangGraph graph in `app/ai/graph.py`. The graph checks for emergency wording, classifies the question, and then either retrieves clinic-document chunks, calls schedule tools, or answers that the question is out of scope. Answers stream back as server-sent events. Conversations and messages are stored per user.
+The consumer only marks a Kafka message as handled after both jobs are queued. If it crashes in between, the message is read again rather than lost.
 
-Retrieval uses pgvector. Ingest documents before expecting answers grounded in the clinic PDFs.
+A third Celery job, `ingest_knowledge`, loads the clinic PDFs. It reads each file in `data/knowledge`, splits it into chunks, turns the chunks into embeddings with OpenAI, and stores them in Postgres for the assistant to search. Front desk triggers it with `POST /knowledge/ingest`.
 
-The assistant tools are limited to the signed-in user's appointments and to clinic hours configured by `CLINIC_*` and `SLOT_MINUTES`.
+## The assistant
+
+The assistant is a LangGraph graph in `app/ai/graph.py`. Each question goes through these steps:
+
+1. **Safety check.** Messages mentioning things like chest pain, trouble breathing, or self-harm get an immediate reply telling the user to call emergency services or go to the nearest emergency department. Nothing else runs.
+2. **Classify.** The model sorts the question into one of four kinds: a general clinic question, a question about the user's own appointments, a request to find a provider and open slots, or something out of scope. If the question is too vague to sort, the assistant asks a follow-up instead of guessing.
+3. **Gather context.** Clinic questions search the ingested PDFs. Appointment questions read only the signed-in user's own appointments. Find-care requests look up providers by specialty and open slots within the configured clinic hours.
+4. **Answer.** The model writes a reply from that context, and the reply streams back while it's being written. Document answers include their sources.
+
+Conversations are saved, so follow-up questions keep their context. Each user only sees their own conversations.
+
+Run the ingestion once (`POST /knowledge/ingest`) before asking document questions. Until then, the assistant has no clinic material to search.
 
 ## Observability
 
-Each API request gets an `X-Request-ID` (or keeps the one the client sent) and a log line with method, path, status, and duration. `/health` and `/metrics` are not logged and are excluded from Prometheus HTTP metrics and from tracing.
+**Logs.** Every request gets an `X-Request-ID` header, or keeps one you send, and a log line with method, path, status, and time taken. Send your own request id to trace a request from your frontend through the logs.
 
-When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, spans go to Jaeger. Compose points the API at `http://jaeger:4317`. Grafana loads the dashboard in `observability/grafana/dashboards/smarthealth.json`.
+**Traces.** With `OTEL_EXPORTER_OTLP_ENDPOINT` set, which Compose does, each request shows up in Jaeger. Assistant steps have their own spans, so you can see where time goes.
 
-## Tests and further reading
+**Metrics.** Prometheus collects request metrics from the API and job metrics from Celery every 10 seconds. These include bookings, notifications delivered and failed, assistant questions, and assistant errors. Grafana loads a ready-made dashboard from `observability/grafana/dashboards/smarthealth.json`.
 
-`docs/archetecture.md` describes the layering. `prds/` holds the original requirement notes, including parts of the domain (billing, reminders) that this codebase does not implement.
+`/health` and `/metrics` are left out of logs, traces, and metrics so health checks don't drown out real traffic.
+
+## Known gaps
+
+- There are no automated tests yet.
+- The first front-desk user has to be promoted by hand in the database (see [Your first booking](#your-first-booking)).
+- `/health` only says the API process is up. It doesn't check Postgres, Temporal, Kafka, or Redis.
+- CORS only allows a frontend at `http://localhost:5173` or `http://127.0.0.1:5173`.
+- The requirements in `prds/` mention billing and reminders. Neither exists in the code yet.
+
+For the reasoning behind the layering, see [`docs/archetecture.md`](docs/archetecture.md).
